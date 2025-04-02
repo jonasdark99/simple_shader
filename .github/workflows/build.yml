@@ -2,7 +2,7 @@ name: Flutter Build (Android + iOS)
 
 on:
   push:
-    branches: [main, dev]
+    branches: [main, dev, master]
 
 env:
   APP_VERSION: '1.0.0'  # Will be overridden
