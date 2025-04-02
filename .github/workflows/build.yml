@@ -1,5 +1,4 @@
-name: Flutter Build (Semantic Version + Auto Build Numbers)
-
+name: Build iOS and Android Releases
 on:
   push:
     branches: [main, master, dev]
@@ -7,154 +6,79 @@ on:
     branches: [main, master]
 
 jobs:
- version-control:
-  name: Version Control
-  runs-on: ubuntu-latest
-  outputs:
-    app_version: ${{ env.APP_VERSION }}
-    build_number: ${{ env.BUILD_NUMBER }}
-  steps:
-    - uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
-
-    - name: Validate pubspec.yaml
-      run: |
-        if ! grep -q '^version:' pubspec.yaml; then
-          echo "::error::No version line found in pubspec.yaml"
-          exit 1
-        fi
-
-    - name: Extract base version
-      id: version
-      run: |
-        FULL_VERSION=$(grep '^version:' pubspec.yaml | awk '{print $2}' | tr -d '"')
-        echo "APP_VERSION=${FULL_VERSION%+*}" >> $GITHUB_ENV
-        echo "BASE_BUILD_NUMBER=${FULL_VERSION#*+}" >> $GITHUB_ENV
-        echo "Current version: $FULL_VERSION"
-
-    - name: Calculate next build number
-      run: |
-        LAST_BUILD=$(git tag -l "v$APP_VERSION*" | sort -V | tail -1 | cut -d'+' -f2 || echo $BASE_BUILD_NUMBER)
-        BUILD_NUMBER=$((LAST_BUILD + 1))
-        echo "Next build number: $BUILD_NUMBER"
-        echo "BUILD_NUMBER=$BUILD_NUMBER" >> $GITHUB_ENV
-
-    - name: Update version
-      run: |
-        # Backup original file
-        cp pubspec.yaml pubspec.yaml.bak
-        
-        # Make replacement
-        sed -i "s/^version:.*/version: $APP_VERSION+$BUILD_NUMBER/" pubspec.yaml
-        
-        # Verify change
-        if diff pubspec.yaml pubspec.yaml.bak; then
-          echo "::warning::Version not updated (already correct?)"
-        else
-          echo "Version updated to $APP_VERSION+$BUILD_NUMBER"
-        fi
-
-    - name: Commit version update
-      if: success()
-      run: |
-        if git diff --quiet pubspec.yaml; then
-          echo "No version change needed"
-        else
-          git config --global user.name "GitHub Actions"
-          git config --global user.email "actions@github.com"
-          git add pubspec.yaml
-          git commit -m "CI: Update build number to $BUILD_NUMBER [skip ci]"
-          git push
-        fi
-
- android:
-    name: Android Build
-    needs: version-control
-    runs-on: ubuntu-latest
-    env:
-      APP_VERSION: ${{ needs.version-control.outputs.app_version }}
-      BUILD_NUMBER: ${{ needs.version-control.outputs.build_number }}
+  build:
+    runs-on: macos-latest
+    permissions:
+      contents: write
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-java@v3
+      - name: Setup Java
+        uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
 
-      - uses: subosito/flutter-action@v2
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.19.0'
-          channel: 'stable'
+          channel: stable
+          flutter-version: '3.29.2'
+          cache: true
 
-      - run: flutter pub get
-      - run: flutter build apk --release --build-name=$APP_VERSION --build-number=$BUILD_NUMBER
-      - run: flutter build appbundle --release --build-name=$APP_VERSION --build-number=$BUILD_NUMBER
+      - name: Install dependencies
+        run: |
+          flutter pub get
+          sudo gem install cocoapods
 
-      - uses: actions/upload-artifact@v4
+      - name: Extract version from pubspec
+        id: version
+        run: |
+          FULL_VERSION=$(grep 'version:' pubspec.yaml | awk '{print $2}' | tr -d '"')
+          echo "VERSION=${FULL_VERSION%+*}" >> $GITHUB_ENV
+          echo "BUILD_NUMBER=${FULL_VERSION#*+}" >> $GITHUB_ENV
+          echo "Using version: ${FULL_VERSION%+*} (build ${FULL_VERSION#*+})"
+
+      - name: Build Android APK
+        run: |
+          flutter build apk --release --build-name=${{ env.VERSION }} --build-number=${{ env.BUILD_NUMBER }}
+
+      - name: Build Android App Bundle
+        run: |
+          flutter build appbundle --release --build-name=${{ env.VERSION }} --build-number=${{ env.BUILD_NUMBER }}
+
+      - name: Build iOS IPA
+        run: |
+          flutter build ipa --release --no-codesign --build-name=${{ env.VERSION }} --build-number=${{ env.BUILD_NUMBER }}
+
+      - name: Prepare artifacts
+        run: |
+          mkdir -p artifacts
+          cp build/app/outputs/flutter-apk/app-release.apk artifacts/
+          cp build/app/outputs/bundle/release/app-release.aab artifacts/
+          cp build/ios/ipa/*.ipa artifacts/
+
+      - name: Upload artifacts
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || || github.ref == 'refs/heads/dev')
+        uses: actions/upload-artifact@v4
         with:
-          name: android-build-${{ env.BUILD_NUMBER }}
-          path: |
-            build/app/outputs/flutter-apk/app-release.apk
-            build/app/outputs/bundle/release/app-release.aab
+          name: app-build-${{ github.run_number }}
+          path: artifacts/
+          retention-days: 7
 
- ios:
-    name: iOS Build
-    needs: version-control
-    runs-on: macos-latest
-    env:
-      APP_VERSION: ${{ needs.version-control.outputs.app_version }}
-      BUILD_NUMBER: ${{ needs.version-control.outputs.build_number }}
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: subosito/flutter-action@v2
+      - name: Create Release (main/master only)
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || || github.ref == 'refs/heads/dev')
+        uses: softprops/action-gh-release@v2
         with:
-          flutter-version: '3.19.0'
-          channel: 'stable'
-
-      - run: flutter pub get
-      - run: flutter build ios --release --no-codesign --build-name=$APP_VERSION --build-number=$BUILD_NUMBER
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ios-build-${{ env.BUILD_NUMBER }}
-          path: build/ios/iphoneos/Runner.app
-
- release:
-  name: Create Release
-  if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
-  needs: [version-control, android, ios]
-  runs-on: ubuntu-latest
-  permissions:
-    contents: write
-
-  steps:
-    - name: Download Android Artifact
-      uses: actions/download-artifact@v4
-      with:
-        name: android-build-${{ needs.version-control.outputs.build_number }}
-        path: artifacts/android/
-
-    - name: Download iOS Artifact
-      uses: actions/download-artifact@v4
-      with:
-        name: ios-build-${{ needs.version-control.outputs.build_number }}
-        path: artifacts/ios/
-
-    - name: Verify Files
-      run: |
-        echo "Checking downloaded artifacts:"
-        ls -R artifacts/
-
-    - name: Create Release
-      uses: softprops/action-gh-release@v2
-      with:
-        tag_name: v${{ needs.version-control.outputs.app_version }}+${{ needs.version-control.outputs.build_number }}
-        files: |
-          artifacts/android/app-release.apk
-          artifacts/android/app-release.aab
-          artifacts/ios/Runner.app
+          tag_name: v${{ env.VERSION }}+${{ env.BUILD_NUMBER }}
+          name: v${{ env.VERSION }} (Build ${{ env.BUILD_NUMBER }})
+          files: |
+            artifacts/app-release.apk
+            artifacts/app-release.aab
+            artifacts/*.ipa
+          body: |
+            ### Version ${{ env.VERSION }}+${{ env.BUILD_NUMBER }}
+            Built from branch: ${{ github.ref_name }}
+            Workflow run: ${{ github.run_number }}
