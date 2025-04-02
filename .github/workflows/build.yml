@@ -42,14 +42,19 @@ jobs:
           flutter build appbundle --release \
             --build-name=${{ needs.setup.outputs.version }} \
             --build-number=${{ needs.setup.outputs.build_number }}
-      - uses: actions/upload-artifact@v4
+      - name: Create Android Release
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+        uses: softprops/action-gh-release@v2
         with:
-          name: android-artifacts
-          path: |
+          tag_name: v${{ needs.setup.outputs.version }}+${{ needs.setup.outputs.build_number }}
+          name: Android v${{ needs.setup.outputs.version }}
+          files: |
             build/app/outputs/flutter-apk/app-release.apk
             build/app/outputs/bundle/release/app-release.aab
-          retention-days: 7
-          
+          body: |
+            ### Android Release ${{ needs.setup.outputs.version }}
+            Built from: ${{ github.ref }}
+            Build number: ${{ needs.setup.outputs.build_number }}
 
   ios:
     needs: setup
@@ -63,40 +68,19 @@ jobs:
           cache: true
       - run: |
           flutter pub get
+          sudo gem install cocoapods
       - run: |
-          flutter build ios --release --no-codesign \
+          flutter build ipa --release --no-codesign \
             --build-name=${{ needs.setup.outputs.version }} \
             --build-number=${{ needs.setup.outputs.build_number }}
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ios-artifacts
-          path: build/ios/iphoneos/Runner.app
-          retention-days: 7
-
-  release:
-    needs: [android, ios]
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || github.ref == 'refs/heads/dev')
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: android-artifacts
-          path: artifacts/android
-      - uses: actions/download-artifact@v4
-        with:
-          name: ios-artifacts
-          path: artifacts/ios
-      - uses: softprops/action-gh-release@v2
+      - name: Create iOS Release
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ needs.setup.outputs.version }}+${{ needs.setup.outputs.build_number }}
-          name: v${{ needs.setup.outputs.version }} (Build ${{ needs.setup.outputs.build_number }})
-          files: |
-            artifacts/android/app-release.apk
-            artifacts/android/app-release.aab
-            artifacts/ios/Runner.app
+          name: iOS v${{ needs.setup.outputs.version }}
+          files: build/ios/ipa/*.ipa
           body: |
-            ### Version ${{ needs.setup.outputs.version }}+${{ needs.setup.outputs.build_number }}
-            Built from branch: ${{ github.ref_name }}
-            Workflow run: ${{ github.run_number }}
+            ### iOS Release ${{ needs.setup.outputs.version }}
+            Built from: ${{ github.ref }}
+            Build number: ${{ needs.setup.outputs.build_number }}
