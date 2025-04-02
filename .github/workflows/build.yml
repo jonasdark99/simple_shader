@@ -112,4 +112,4 @@ jobs:
         files: |
           artifacts/android/flutter-apk/app-release.apk
           artifacts/android/bundle/release/app-release.aab
-          artifacts/ios/iphoneos/Runner.app
+          artifacts/ios/Runner
