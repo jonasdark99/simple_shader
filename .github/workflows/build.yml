@@ -127,40 +127,34 @@ jobs:
  release:
   name: Create Release
   if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
-  needs: [android, ios]
+  needs: [version-control, android, ios]
   runs-on: ubuntu-latest
   permissions:
-    contents: write  # Required for creating releases
-    packages: write  # Required if using GitHub Packages
+    contents: write
 
   steps:
-    - name: Download Android Artifacts
+    - name: Download Android Artifact
       uses: actions/download-artifact@v4
       with:
         name: android-build-${{ needs.version-control.outputs.build_number }}
-        path: android-artifacts
+        path: artifacts/android/
 
-    - name: Download iOS Artifacts
+    - name: Download iOS Artifact
       uses: actions/download-artifact@v4
       with:
         name: ios-build-${{ needs.version-control.outputs.build_number }}
-        path: ios-artifacts
+        path: artifacts/ios/
 
-    - name: Verify Artifacts
+    - name: Verify Files
       run: |
-        ls -la android-artifacts/
-        ls -la ios-artifacts/
-        echo "APP_VERSION=${{ needs.version-control.outputs.app_version }}"
-        echo "BUILD_NUMBER=${{ needs.version-control.outputs.build_number }}"
+        echo "Checking downloaded artifacts:"
+        ls -R artifacts/
 
-    - name: Create GitHub Release
+    - name: Create Release
       uses: softprops/action-gh-release@v2
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
         tag_name: v${{ needs.version-control.outputs.app_version }}+${{ needs.version-control.outputs.build_number }}
-        name: v${{ needs.version-control.outputs.app_version }} (Build ${{ needs.version-control.outputs.build_number }})
         files: |
-          android-artifacts/app-release.apk
-          android-artifacts/app-release.aab
-          ios-artifacts/Runner.app
+          artifacts/android/app-release.apk
+          artifacts/android/app-release.aab
+          artifacts/ios/Runner.app
