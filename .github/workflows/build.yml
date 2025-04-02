@@ -125,23 +125,42 @@ jobs:
           path: build/ios/iphoneos/Runner.app
 
  release:
-    name: Create Release
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
-    needs: [android, ios]
-    runs-on: ubuntu-latest
+  name: Create Release
+  if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+  needs: [android, ios]
+  runs-on: ubuntu-latest
+  permissions:
+    contents: write  # Required for creating releases
+    packages: write  # Required if using GitHub Packages
 
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: '*-build-${{ needs.version-control.outputs.build_number }}'
-          merge-multiple: true
+  steps:
+    - name: Download Android Artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: android-build-${{ needs.version-control.outputs.build_number }}
+        path: android-artifacts
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: v${{ needs.version-control.outputs.app_version }}+${{ needs.version-control.outputs.build_number }}
-          name: v${{ needs.version-control.outputs.app_version }} (Build ${{ needs.version-control.outputs.build_number }})
-          files: |
-            app-release.apk
-            app-release.aab
-            Runner.app
+    - name: Download iOS Artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: ios-build-${{ needs.version-control.outputs.build_number }}
+        path: ios-artifacts
+
+    - name: Verify Artifacts
+      run: |
+        ls -la android-artifacts/
+        ls -la ios-artifacts/
+        echo "APP_VERSION=${{ needs.version-control.outputs.app_version }}"
+        echo "BUILD_NUMBER=${{ needs.version-control.outputs.build_number }}"
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v2
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: v${{ needs.version-control.outputs.app_version }}+${{ needs.version-control.outputs.build_number }}
+        name: v${{ needs.version-control.outputs.app_version }} (Build ${{ needs.version-control.outputs.build_number }})
+        files: |
+          android-artifacts/app-release.apk
+          android-artifacts/app-release.aab
+          ios-artifacts/Runner.app
