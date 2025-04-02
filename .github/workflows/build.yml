@@ -7,43 +7,68 @@ on:
     branches: [main, master]
 
 jobs:
-  version-control:
-    name: Version Control
-    runs-on: ubuntu-latest
-    outputs:
-      app_version: ${{ env.APP_VERSION }}
-      build_number: ${{ env.BUILD_NUMBER }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0  # Needed for git tag history
+ version-control:
+  name: Version Control
+  runs-on: ubuntu-latest
+  outputs:
+    app_version: ${{ env.APP_VERSION }}
+    build_number: ${{ env.BUILD_NUMBER }}
+  steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
 
-      - name: Extract base version
-        id: version
-        run: |
-          # Get version from pubspec.yaml (e.g. "1.0.0+1")
-          FULL_VERSION=$(grep 'version:' pubspec.yaml | awk '{print $2}' | tr -d '"')
-          echo "APP_VERSION=${FULL_VERSION%+*}" >> $GITHUB_ENV
-          echo "BASE_BUILD_NUMBER=${FULL_VERSION#*+}" >> $GITHUB_ENV
+    - name: Validate pubspec.yaml
+      run: |
+        if ! grep -q '^version:' pubspec.yaml; then
+          echo "::error::No version line found in pubspec.yaml"
+          exit 1
+        fi
 
-      - name: Calculate next build number
-        run: |
-          # Get highest existing build number from git tags
-          LAST_BUILD=$(git tag -l "v$APP_VERSION*" | sort -V | tail -1 | cut -d'+' -f2 || echo $BASE_BUILD_NUMBER)
-          BUILD_NUMBER=$((LAST_BUILD + 1))
-          echo "Next build number: $BUILD_NUMBER"
-          echo "BUILD_NUMBER=$BUILD_NUMBER" >> $GITHUB_ENV
+    - name: Extract base version
+      id: version
+      run: |
+        FULL_VERSION=$(grep '^version:' pubspec.yaml | awk '{print $2}' | tr -d '"')
+        echo "APP_VERSION=${FULL_VERSION%+*}" >> $GITHUB_ENV
+        echo "BASE_BUILD_NUMBER=${FULL_VERSION#*+}" >> $GITHUB_ENV
+        echo "Current version: $FULL_VERSION"
 
-      - name: Update pubspec.yaml
-        run: |
-          sed -i "s/version: .*/version: $APP_VERSION+$BUILD_NUMBER/" pubspec.yaml
+    - name: Calculate next build number
+      run: |
+        LAST_BUILD=$(git tag -l "v$APP_VERSION*" | sort -V | tail -1 | cut -d'+' -f2 || echo $BASE_BUILD_NUMBER)
+        BUILD_NUMBER=$((LAST_BUILD + 1))
+        echo "Next build number: $BUILD_NUMBER"
+        echo "BUILD_NUMBER=$BUILD_NUMBER" >> $GITHUB_ENV
+
+    - name: Update version
+      run: |
+        # Backup original file
+        cp pubspec.yaml pubspec.yaml.bak
+        
+        # Make replacement
+        sed -i "s/^version:.*/version: $APP_VERSION+$BUILD_NUMBER/" pubspec.yaml
+        
+        # Verify change
+        if diff pubspec.yaml pubspec.yaml.bak; then
+          echo "::warning::Version not updated (already correct?)"
+        else
+          echo "Version updated to $APP_VERSION+$BUILD_NUMBER"
+        fi
+
+    - name: Commit version update
+      if: success()
+      run: |
+        if git diff --quiet pubspec.yaml; then
+          echo "No version change needed"
+        else
           git config --global user.name "GitHub Actions"
           git config --global user.email "actions@github.com"
           git add pubspec.yaml
           git commit -m "CI: Update build number to $BUILD_NUMBER [skip ci]"
           git push
+        fi
 
-  android:
+ android:
     name: Android Build
     needs: version-control
     runs-on: ubuntu-latest
@@ -75,7 +100,7 @@ jobs:
             build/app/outputs/flutter-apk/app-release.apk
             build/app/outputs/bundle/release/app-release.aab
 
-  ios:
+ ios:
     name: iOS Build
     needs: version-control
     runs-on: macos-latest
@@ -99,7 +124,7 @@ jobs:
           name: ios-build-${{ env.BUILD_NUMBER }}
           path: build/ios/iphoneos/Runner.app
 
-  release:
+ release:
     name: Create Release
     if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
     needs: [android, ios]
