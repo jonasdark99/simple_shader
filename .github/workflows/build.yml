@@ -27,6 +27,7 @@ jobs:
           channel: 'stable'
 
       - run: flutter pub get
+      - run: flutter pub outdated # only necessary if u use old libraries
 
       - name: Determine version
         id: version
@@ -61,6 +62,7 @@ jobs:
           channel: 'stable'
 
       - run: flutter pub get
+      - run: flutter pub outdated # only necessary if u use old libraries
 
       - name: Determine version
         id: version
