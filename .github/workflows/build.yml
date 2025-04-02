@@ -42,6 +42,7 @@ jobs:
         with:
           flutter-version: '3.19.0'
           channel: 'stable'
+          cache: true
 
       - run: flutter pub get
       - run: flutter build apk --release --build-name=$APP_VERSION --build-number=$BUILD_NUMBER
@@ -69,6 +70,7 @@ jobs:
         with:
           flutter-version: '3.19.0'
           channel: 'stable'
+          cache: true
 
       - run: flutter pub get
       - run: flutter build ios --release --no-codesign --build-name=$APP_VERSION --build-number=$BUILD_NUMBER
