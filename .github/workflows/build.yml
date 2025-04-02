@@ -1,4 +1,5 @@
-name: Build iOS and Android Releases
+name: Flutter Build (Semantic Version + Auto Build Numbers)
+
 on:
   push:
     branches: [main, master, dev]
@@ -6,81 +7,107 @@ on:
     branches: [main, master]
 
 jobs:
-  setup:
-    runs-on: ubuntu-latest
-    outputs:
-      version: ${{ steps.version.outputs.version }}
-      build_number: ${{ steps.version.outputs.build_number }}
-    steps:
-      - uses: actions/checkout@v4
-      - name: Extract version
-        id: version
-        run: |
-          FULL_VERSION=$(grep 'version:' pubspec.yaml | awk '{print $2}' | tr -d '"')
-          echo "version=${FULL_VERSION%+*}" >> $GITHUB_OUTPUT
-          echo "build_number=${FULL_VERSION#*+}" >> $GITHUB_OUTPUT
+ version-control:
+  name: Version Control
+  runs-on: ubuntu-latest
+  outputs:
+    app_version: ${{ steps.version.outputs.version }}
+    build_number: ${{ steps.version.outputs.build_number }}
+  steps:
+    - uses: actions/checkout@v4
+    - name: Extract version
+      id: version
+      run: |
+        FULL_VERSION=$(grep 'version:' pubspec.yaml | awk '{print $2}' | tr -d '"')
+        echo "version=${FULL_VERSION%+*}" >> $GITHUB_OUTPUT
+        echo "build_number=${FULL_VERSION#*+}" >> $GITHUB_OUTPUT
 
-  android:
-    needs: setup
+ android:
+    name: Android Build
+    needs: version-control
     runs-on: ubuntu-latest
+    env:
+      APP_VERSION: ${{ needs.version-control.outputs.app_version }}
+      BUILD_NUMBER: ${{ needs.version-control.outputs.build_number }}
+
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+
+      - uses: actions/setup-java@v3
         with:
           java-version: '17'
           distribution: 'temurin'
+
       - uses: subosito/flutter-action@v2
         with:
-          channel: stable
           flutter-version: '3.19.0'
-          cache: true
+          channel: 'stable'
+
       - run: flutter pub get
-      - run: |
-          flutter build apk --release \
-            --build-name=${{ needs.setup.outputs.version }} \
-            --build-number=${{ needs.setup.outputs.build_number }}
-          flutter build appbundle --release \
-            --build-name=${{ needs.setup.outputs.version }} \
-            --build-number=${{ needs.setup.outputs.build_number }}
-      - name: Create Android Release
-        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
-        uses: softprops/action-gh-release@v2
+      - run: flutter build apk --release --build-name=$APP_VERSION --build-number=$BUILD_NUMBER
+      - run: flutter build appbundle --release --build-name=$APP_VERSION --build-number=$BUILD_NUMBER
+
+      - uses: actions/upload-artifact@v4
         with:
-          tag_name: v${{ needs.setup.outputs.version }}+${{ needs.setup.outputs.build_number }}
-          name: Android v${{ needs.setup.outputs.version }}
-          files: |
+          name: android-build-${{ env.BUILD_NUMBER }}
+          path: |
             build/app/outputs/flutter-apk/app-release.apk
             build/app/outputs/bundle/release/app-release.aab
-          body: |
-            ### Android Release ${{ needs.setup.outputs.version }}
-            Built from: ${{ github.ref }}
-            Build number: ${{ needs.setup.outputs.build_number }}
 
-  ios:
-    needs: setup
+ ios:
+    name: iOS Build
+    needs: version-control
     runs-on: macos-latest
+    env:
+      APP_VERSION: ${{ needs.version-control.outputs.app_version }}
+      BUILD_NUMBER: ${{ needs.version-control.outputs.build_number }}
+
     steps:
       - uses: actions/checkout@v4
+
       - uses: subosito/flutter-action@v2
         with:
-          channel: stable
           flutter-version: '3.19.0'
-          cache: true
-      - run: |
-          flutter pub get
-          sudo gem install cocoapods
-      - run: |
-          flutter build ipa --release --no-codesign \
-            --build-name=${{ needs.setup.outputs.version }} \
-            --build-number=${{ needs.setup.outputs.build_number }}
-      - name: Create iOS Release
-        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
-        uses: softprops/action-gh-release@v2
+          channel: 'stable'
+
+      - run: flutter pub get
+      - run: flutter build ios --release --no-codesign --build-name=$APP_VERSION --build-number=$BUILD_NUMBER
+
+      - uses: actions/upload-artifact@v4
         with:
-          tag_name: v${{ needs.setup.outputs.version }}+${{ needs.setup.outputs.build_number }}
-          name: iOS v${{ needs.setup.outputs.version }}
-          files: build/ios/ipa/*.ipa
-          body: |
-            ### iOS Release ${{ needs.setup.outputs.version }}
-            Built from: ${{ github.ref }}
-            Build number: ${{ needs.setup.outputs.build_number }}
+          name: ios-build-${{ env.BUILD_NUMBER }}
+          path: build/ios/iphoneos/Runner.app
+
+ release:
+  name: Create Release
+  if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+  needs: [version-control, android, ios]
+  runs-on: ubuntu-latest
+  permissions:
+    contents: write
+
+  steps:
+    - name: Download Android Artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: android-build-${{ needs.version-control.outputs.build_number }}
+        path: artifacts/android/
+
+    - name: Download iOS Artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: ios-build-${{ needs.version-control.outputs.build_number }}
+        path: artifacts/ios/
+
+    - name: Verify Files
+      run: |
+        echo "Checking downloaded artifacts:"
+        ls -R artifacts/
+    - name: Create Release
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: v${{ needs.version-control.outputs.app_version }}+${{ needs.version-control.outputs.build_number }}
+        files: |
+          artifacts/android/flutter-apk/app-release.apk
+          artifacts/android/bundle/release/app-release.aab
+          artifacts/ios/iphoneos/Runner.app
