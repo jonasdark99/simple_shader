@@ -42,7 +42,7 @@ jobs:
       - run: cp build/app/outputs/flutter-apk/app-release.apk build/outputs/app-$APP_VERSION+$BUILD_NUMBER.apk
       - run: cp build/app/outputs/bundle/release/app-release.aab build/outputs/app-$APP_VERSION+$BUILD_NUMBER.aab
 
-      - uses: actions/upload-artifact@v2
+      - uses: actions/upload-artifact@v4
         with:
           name: android-builds
           path: build/outputs/
@@ -75,7 +75,7 @@ jobs:
       - run: cp -r build/ios/iphoneos/Runner.app build/outputs/
       - run: zip -r build/outputs/ios-app-$APP_VERSION+$BUILD_NUMBER.zip build/outputs/Runner.app
 
-      - uses: actions/upload-artifact@v2
+      - uses: actions/upload-artifact@v4
         with:
           name: ios-builds
           path: build/outputs/
@@ -87,18 +87,18 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/download-artifact@v2
+      - uses: actions/download-artifact@v4
         with:
           name: android-builds
           path: android-artifacts
 
-      - uses: actions/download-artifact@v2
+      - uses: actions/download-artifact@v4
         with:
           name: ios-builds
           path: ios-artifacts
 
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ env.APP_VERSION }}+${{ env.BUILD_NUMBER }}
           name: Release v${{ env.APP_VERSION }} (Build ${{ env.BUILD_NUMBER }})
