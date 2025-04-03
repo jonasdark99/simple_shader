@@ -23,7 +23,7 @@ jobs:
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
             TAG_NAME=${GITHUB_REF#refs/tags/}
             echo "version=$TAG_NAME" >> $GITHUB_OUTPUT
-            echo "build_number=$(date +%Y%m%d%H%M)" >> $GITHUB_OUTPUT
+            echo "build_number=1" >> $GITHUB_OUTPUT
             echo "is_tag=true" >> $GITHUB_OUTPUT
           else
             FULL_VERSION=$(grep 'version:' pubspec.yaml | awk '{print $2}' | tr -d '"' || echo "0.0.0+0")
