@@ -1,4 +1,4 @@
-name: Flutter CI/CD Pipeline
+name: Flutter Android CI/CD Pipeline
 
 on:
   push:
@@ -8,8 +8,35 @@ on:
     branches: [main, master]
 
 jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      build_number: ${{ steps.version.outputs.build_number }}
+      is_tag: ${{ steps.version.outputs.is_tag }}
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Extract version info
+        id: version
+        run: |
+          # Determine if this is a tag build
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            TAG_NAME=${GITHUB_REF#refs/tags/}
+            echo "version=$TAG_NAME" >> $GITHUB_OUTPUT
+            echo "build_number=$(date +%Y%m%d%H%M)" >> $GITHUB_OUTPUT
+            echo "is_tag=true" >> $GITHUB_OUTPUT
+          else
+            # For branches/PRs, use pubspec version
+            FULL_VERSION=$(grep 'version:' pubspec.yaml | awk '{print $2}' | tr -d '"' || echo "0.0.0+0")
+            echo "version=${FULL_VERSION%+*}" >> $GITHUB_OUTPUT
+            echo "build_number=${FULL_VERSION#*+}" >> $GITHUB_OUTPUT
+            echo "is_tag=false" >> $GITHUB_OUTPUT
+          fi
+
   test:
     name: Run Tests
+    needs: setup
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -36,48 +63,20 @@ jobs:
         if: steps.check_tests.outputs.has_tests == 'false'
         run: echo "Skipping tests - no flutter_test dependency found"
 
-  # Runs on main/master pushes AND any tag (including experimental)
-  build:
-    name: Build Artifacts
-    needs: test
+  android:
+    name: Build Android
+    needs: [setup, test]
     if: |
       github.event_name == 'push' && (
         github.ref == 'refs/heads/main' ||
         github.ref == 'refs/heads/master' ||
-        startsWith(github.ref, 'refs/tags/'))
-    strategy:
-      matrix:
-        platform: [android]  # Removed iOS
-    runs-on: ubuntu-latest   # No need for macOS since iOS is removed
-    
+        needs.setup.outputs.is_tag == 'true'
+      )
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Extract version info
-        id: version
-        shell: bash
-        run: |
-            # Debug: Show current ref
-            echo "GITHUB_REF: $GITHUB_REF"
-            
-            # For tags, use tag name as version
-            if [[ "$GITHUB_REF" == refs/tags/* ]]; then
-                TAG_NAME=${GITHUB_REF#refs/tags/}
-                echo "VERSION=$TAG_NAME" >> $GITHUB_ENV
-                echo "BUILD_NUMBER=$(date +%Y%m%d%H%M)" >> $GITHUB_ENV
-                echo "Extracted from tag: VERSION=$TAG_NAME, BUILD_NUMBER=$(date +%Y%m%d%H%M)"
-            else
-                # For branches, use pubspec version
-                FULL_VERSION=$(grep 'version:' pubspec.yaml | awk '{print $2}' | tr -d '"')
-                echo "VERSION=${FULL_VERSION%+*}" >> $GITHUB_ENV
-                echo "BUILD_NUMBER=${FULL_VERSION#*+}" >> $GITHUB_ENV
-                echo "Extracted from pubspec: VERSION=${FULL_VERSION%+*}, BUILD_NUMBER=${FULL_VERSION#*+}"
-            fi
-            
-            # Debug: Show extracted values
-            echo "Extracted VERSION: $VERSION"
-            echo "Extracted BUILD_NUMBER: $BUILD_NUMBER"
-
-      - name: Setup Java (Android only)
+      
+      - name: Setup Java
         uses: actions/setup-java@v3
         with:
           java-version: '17'
@@ -88,32 +87,30 @@ jobs:
           flutter-version: '3.19.0'
           cache: true
 
-      - name: Build Android
+      - name: Build APK and App Bundle
         run: |
+          flutter pub get
           flutter build apk --release \
-            --build-name=$VERSION --build-number=$BUILD_NUMBER
+            --build-name=${{ needs.setup.outputs.version }} \
+            --build-number=${{ needs.setup.outputs.build_number }}
           flutter build appbundle --release \
-            --build-name=$VERSION --build-number=$BUILD_NUMBER
-          mkdir -p artifacts/android
-          cp build/app/outputs/flutter-apk/app-release.apk artifacts/android/app-$VERSION+$BUILD_NUMBER.apk
-          cp build/app/outputs/bundle/release/app-release.aab artifacts/android/app-$VERSION+$BUILD_NUMBER.aab
-
-      - name: List Artifacts Before Upload (Debug)
-        run: |
-          echo "Generated artifacts:"
-          ls -R artifacts/
+            --build-name=${{ needs.setup.outputs.version }} \
+            --build-number=${{ needs.setup.outputs.build_number }}
+          
+          mkdir -p artifacts
+          cp build/app/outputs/flutter-apk/app-release.apk artifacts/app-${{ needs.setup.outputs.version }}+${{ needs.setup.outputs.build_number }}.apk
+          cp build/app/outputs/bundle/release/app-release.aab artifacts/app-${{ needs.setup.outputs.version }}+${{ needs.setup.outputs.build_number }}.aab
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: android-artifacts-${{ env.BUILD_NUMBER }}
-          path: artifacts/android/*
+          name: android-artifacts-${{ needs.setup.outputs.build_number }}
+          path: artifacts/*
           retention-days: 7
 
-  # Only creates releases for main/master (not experimental tags)
   release:
     name: Create Release
-    needs: build
+    needs: android
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
     runs-on: ubuntu-latest
     permissions:
@@ -121,18 +118,19 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          pattern: "*-artifacts-*"
-          merge: true
+          name: android-artifacts-${{ needs.setup.outputs.build_number }}
+          path: artifacts
       
-      - name: List Downloaded Artifacts (Debug)
-        run: |
-          echo "Downloaded artifacts:"
-          ls -R
-
-      - uses: softprops/action-gh-release@v2
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ env.VERSION }}+${{ env.BUILD_NUMBER }}
-          name: v${{ env.VERSION }}
+          tag_name: ${{ needs.setup.outputs.version }}+${{ needs.setup.outputs.build_number }}
+          name: ${{ needs.setup.outputs.version }}
           files: |
-            *-artifacts-*/*.apk
-            *-artifacts-*/*.aab 
+            artifacts/app-*.apk
+            artifacts/app-*.aab
+          body: |
+            ### Android Release ${{ needs.setup.outputs.version }}+${{ needs.setup.outputs.build_number }}
+            - APK and App Bundle included
+            - Built from: ${{ github.ref }}
+            - Workflow run: ${{ github.run_number }}
