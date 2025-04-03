@@ -1,39 +1,61 @@
-name: Flutter Build (Semantic Version + Auto Build Numbers)
+name: Flutter CI/CD Pipeline
 
 on:
   push:
-    branches: [main, master, dev]
+    branches: 
+      - '**'  # Runs on all branches
+    tags:
+      - '*'   # Runs on ALL tags (v1.0.0, exp, test, etc.)
   pull_request:
     branches: [main, master]
 
 jobs:
- version-control:
-  name: Version Control
-  runs-on: ubuntu-latest
-  outputs:
-    app_version: ${{ steps.version.outputs.version }}
-    build_number: ${{ steps.version.outputs.build_number }}
-  steps:
-    - uses: actions/checkout@v4
-    - name: Extract version
-      id: version
-      run: |
-        FULL_VERSION=$(grep 'version:' pubspec.yaml | awk '{print $2}' | tr -d '"')
-        echo "version=${FULL_VERSION%+*}" >> $GITHUB_OUTPUT
-        echo "build_number=${FULL_VERSION#*+}" >> $GITHUB_OUTPUT
-
- android:
-    name: Android Build
-    needs: version-control
+  # Runs on every push and PR
+  test:
+    name: Run Tests
     runs-on: ubuntu-latest
-    env:
-      APP_VERSION: ${{ needs.version-control.outputs.app_version }}
-      BUILD_NUMBER: ${{ needs.version-control.outputs.build_number }}
-
     steps:
       - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.19.0'
+      - run: flutter pub get
+      - run: flutter test
 
-      - uses: actions/setup-java@v3
+  # Runs on main/master pushes AND any tag (including experimental)
+  build:
+    name: Build Artifacts
+    needs: test
+    if: |
+      github.event_name == 'push' && (
+        github.ref == 'refs/heads/main' ||
+        github.ref == 'refs/heads/master' ||
+        startsWith(github.ref, 'refs/tags/'))
+    strategy:
+      matrix:
+        platform: [android, ios]
+    runs-on: ${{ matrix.platform == 'ios' && 'macos-latest' || 'ubuntu-latest' }}
+    
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extract version info
+        id: version
+        run: |
+          # For tags, use tag name as version
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            TAG_NAME=${GITHUB_REF#refs/tags/}
+            echo "VERSION=$TAG_NAME" >> $GITHUB_ENV
+            echo "BUILD_NUMBER=$(date +%Y%m%d%H%M)" >> $GITHUB_ENV
+          else
+            # For branches, use pubspec version
+            FULL_VERSION=$(grep 'version:' pubspec.yaml | awk '{print $2}' | tr -d '"')
+            echo "VERSION=${FULL_VERSION%+*}" >> $GITHUB_ENV
+            echo "BUILD_NUMBER=${FULL_VERSION#*+}" >> $GITHUB_ENV
+          fi
+
+      - name: Setup Java (Android only)
+        if: matrix.platform == 'android'
+        uses: actions/setup-java@v3
         with:
           java-version: '17'
           distribution: 'temurin'
@@ -41,75 +63,53 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.19.0'
-          channel: 'stable'
           cache: true
 
-      - run: flutter pub get
-      - run: flutter build apk --release --build-name=$APP_VERSION --build-number=$BUILD_NUMBER
-      - run: flutter build appbundle --release --build-name=$APP_VERSION --build-number=$BUILD_NUMBER
+      - name: Build Android
+        if: matrix.platform == 'android'
+        run: |
+          flutter build apk --release \
+            --build-name=$VERSION --build-number=$BUILD_NUMBER
+          flutter build appbundle --release \
+            --build-name=$VERSION --build-number=$BUILD_NUMBER
+          mkdir -p artifacts/android
+          cp build/app/outputs/flutter-apk/app-release.apk artifacts/android/app-$VERSION+$BUILD_NUMBER.apk
+          cp build/app/outputs/bundle/release/app-release.aab artifacts/android/app-$VERSION+$BUILD_NUMBER.aab
 
-      - uses: actions/upload-artifact@v4
+      - name: Build iOS
+        if: matrix.platform == 'ios'
+        run: |
+          flutter build ios --release --no-codesign \
+            --build-name=$VERSION --build-number=$BUILD_NUMBER
+          mkdir -p artifacts/ios
+          cd build/ios/iphoneos
+          zip -r ../../../artifacts/ios/app-$VERSION+$BUILD_NUMBER.zip Runner.app
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
         with:
-          name: android-build-${{ env.BUILD_NUMBER }}
-          path: |
-            build/app/outputs/flutter-apk/app-release.apk
-            build/app/outputs/bundle/release/app-release.aab
+          name: ${{ matrix.platform }}-artifacts-${{ env.BUILD_NUMBER }}
+          path: artifacts/${{ matrix.platform }}/*
+          retention-days: 7
 
- ios:
-    name: iOS Build
-    needs: version-control
-    runs-on: macos-latest
-    env:
-      APP_VERSION: ${{ needs.version-control.outputs.app_version }}
-      BUILD_NUMBER: ${{ needs.version-control.outputs.build_number }}
-
+  # Only creates releases for main/master (not experimental tags)
+  release:
+    name: Create Release
+    needs: build
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: subosito/flutter-action@v2
+      - uses: actions/download-artifact@v4
         with:
-          flutter-version: '3.19.0'
-          channel: 'stable'
-          cache: true
-
-      - run: flutter pub get
-      - run: flutter build ios --release --no-codesign --build-name=$APP_VERSION --build-number=$BUILD_NUMBER
-
-      - uses: actions/upload-artifact@v4
+          pattern: *-artifacts-*
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
         with:
-          name: ios-build-${{ env.BUILD_NUMBER }}
-          path: build/ios/iphoneos/Runner.app
-
- release:
-  name: Create Release
-  if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
-  needs: [version-control, android, ios]
-  runs-on: ubuntu-latest
-  permissions:
-    contents: write
-
-  steps:
-    - name: Download Android Artifact
-      uses: actions/download-artifact@v4
-      with:
-        name: android-build-${{ needs.version-control.outputs.build_number }}
-        path: artifacts/android/
-
-    - name: Download iOS Artifact
-      uses: actions/download-artifact@v4
-      with:
-        name: ios-build-${{ needs.version-control.outputs.build_number }}
-        path: artifacts/ios/
-
-    - name: Verify Files
-      run: |
-        echo "Checking downloaded artifacts:"
-        ls -R artifacts/
-    - name: Create Release
-      uses: softprops/action-gh-release@v2
-      with:
-        tag_name: v${{ needs.version-control.outputs.app_version }}+${{ needs.version-control.outputs.build_number }}
-        files: |
-          artifacts/android/flutter-apk/app-release.apk
-          artifacts/android/bundle/release/app-release.aab
-          artifacts/ios/Runner
+          tag_name: v${{ env.VERSION }}+${{ env.BUILD_NUMBER }}
+          name: Release v${{ env.VERSION }}
+          files: |
+            artifacts/android/*.apk
+            artifacts/android/*.aab
+            artifacts/ios/*.zip
