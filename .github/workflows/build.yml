@@ -54,18 +54,28 @@ jobs:
       - uses: actions/checkout@v4
       - name: Extract version info
         id: version
+        shell: bash
         run: |
-          # For tags, use tag name as version
-          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            TAG_NAME=${GITHUB_REF#refs/tags/}
-            echo "VERSION=$TAG_NAME" >> $GITHUB_ENV
-            echo "BUILD_NUMBER=$(date +%Y%m%d%H%M)" >> $GITHUB_ENV
-          else
-            # For branches, use pubspec version
-            FULL_VERSION=$(grep 'version:' pubspec.yaml | awk '{print $2}' | tr -d '"')
-            echo "VERSION=${FULL_VERSION%+*}" >> $GITHUB_ENV
-            echo "BUILD_NUMBER=${FULL_VERSION#*+}" >> $GITHUB_ENV
-          fi
+            # Debug: Show current ref
+            echo "GITHUB_REF: $GITHUB_REF"
+            
+            # For tags, use tag name as version
+            if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+                TAG_NAME=${GITHUB_REF#refs/tags/}
+                echo "VERSION=$TAG_NAME" >> $GITHUB_ENV
+                echo "BUILD_NUMBER=$(date +%Y%m%d%H%M)" >> $GITHUB_ENV
+                echo "Extracted from tag: VERSION=$TAG_NAME, BUILD_NUMBER=$(date +%Y%m%d%H%M)"
+            else
+                # For branches, use pubspec version
+                FULL_VERSION=$(grep 'version:' pubspec.yaml | awk '{print $2}' | tr -d '"')
+                echo "VERSION=${FULL_VERSION%+*}" >> $GITHUB_ENV
+                echo "BUILD_NUMBER=${FULL_VERSION#*+}" >> $GITHUB_ENV
+                echo "Extracted from pubspec: VERSION=${FULL_VERSION%+*}, BUILD_NUMBER=${FULL_VERSION#*+}"
+            fi
+            
+            # Debug: Show extracted values
+            echo "Extracted VERSION: $VERSION"
+            echo "Extracted BUILD_NUMBER: $BUILD_NUMBER"
 
       - name: Setup Java (Android only)
         uses: actions/setup-java@v3
@@ -122,7 +132,7 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ env.VERSION }}+${{ env.BUILD_NUMBER }}
-          name: Release v${{ env.VERSION }}
+          name: v${{ env.VERSION }}
           files: |
             *-artifacts-*/*.apk
             *-artifacts-*/*.aab 
