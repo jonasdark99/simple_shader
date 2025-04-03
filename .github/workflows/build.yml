@@ -124,5 +124,5 @@ jobs:
           tag_name: v${{ env.VERSION }}+${{ env.BUILD_NUMBER }}
           name: Release v${{ env.VERSION }}
           files: |
-            artifacts/android/*.apk
-            artifacts/android/*.aab
+            *-artifacts-*/*.apk
+            *-artifacts-*/*.aab
