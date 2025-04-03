@@ -47,8 +47,8 @@ jobs:
         startsWith(github.ref, 'refs/tags/'))
     strategy:
       matrix:
-        platform: [android, ios]
-    runs-on: ${{ matrix.platform == 'ios' && 'macos-latest' || 'ubuntu-latest' }}
+        platform: [android]  # Removed iOS
+    runs-on: ubuntu-latest   # No need for macOS since iOS is removed
     
     steps:
       - uses: actions/checkout@v4
@@ -68,7 +68,6 @@ jobs:
           fi
 
       - name: Setup Java (Android only)
-        if: matrix.platform == 'android'
         uses: actions/setup-java@v3
         with:
           java-version: '17'
@@ -80,7 +79,6 @@ jobs:
           cache: true
 
       - name: Build Android
-        if: matrix.platform == 'android'
         run: |
           flutter build apk --release \
             --build-name=$VERSION --build-number=$BUILD_NUMBER
@@ -90,20 +88,16 @@ jobs:
           cp build/app/outputs/flutter-apk/app-release.apk artifacts/android/app-$VERSION+$BUILD_NUMBER.apk
           cp build/app/outputs/bundle/release/app-release.aab artifacts/android/app-$VERSION+$BUILD_NUMBER.aab
 
-      - name: Build iOS
-        if: matrix.platform == 'ios'
+      - name: List Artifacts Before Upload (Debug)
         run: |
-          flutter build ios --release --no-codesign \
-            --build-name=$VERSION --build-number=$BUILD_NUMBER
-          mkdir -p artifacts/ios
-          cd build/ios/iphoneos
-          zip -r ../../../artifacts/ios/app-$VERSION+$BUILD_NUMBER.zip Runner.app
+          echo "Generated artifacts:"
+          ls -R artifacts/
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.platform }}-artifacts-${{ env.BUILD_NUMBER }}
-          path: artifacts/${{ matrix.platform }}/*
+          name: android-artifacts-${{ env.BUILD_NUMBER }}
+          path: artifacts/android/*
           retention-days: 7
 
   # Only creates releases for main/master (not experimental tags)
@@ -119,6 +113,12 @@ jobs:
         with:
           pattern: "*-artifacts-*"
           merge: true
+      
+      - name: List Downloaded Artifacts (Debug)
+        run: |
+          echo "Downloaded artifacts:"
+          ls -R
+
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ env.VERSION }}+${{ env.BUILD_NUMBER }}
@@ -126,4 +126,3 @@ jobs:
           files: |
             artifacts/android/*.apk
             artifacts/android/*.aab
-            artifacts/ios/*.zip
