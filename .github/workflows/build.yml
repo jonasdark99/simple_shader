@@ -20,14 +20,12 @@ jobs:
       - name: Extract version info
         id: version
         run: |
-          # Determine if this is a tag build
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
             TAG_NAME=${GITHUB_REF#refs/tags/}
             echo "version=$TAG_NAME" >> $GITHUB_OUTPUT
             echo "build_number=$(date +%Y%m%d%H%M)" >> $GITHUB_OUTPUT
             echo "is_tag=true" >> $GITHUB_OUTPUT
           else
-            # For branches/PRs, use pubspec version
             FULL_VERSION=$(grep 'version:' pubspec.yaml | awk '{print $2}' | tr -d '"' || echo "0.0.0+0")
             echo "version=${FULL_VERSION%+*}" >> $GITHUB_OUTPUT
             echo "build_number=${FULL_VERSION#*+}" >> $GITHUB_OUTPUT
