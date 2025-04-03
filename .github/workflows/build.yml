@@ -125,4 +125,4 @@ jobs:
           name: Release v${{ env.VERSION }}
           files: |
             *-artifacts-*/*.apk
-            *-artifacts-*/*.aab
+            *-artifacts-*/*.aab 
